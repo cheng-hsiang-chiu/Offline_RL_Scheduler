@@ -63,6 +63,7 @@ struct Task {
 class ThreadPool {
 
 friend class RL_Policy;
+friend class TGS;
 
 public:
 
@@ -78,7 +79,7 @@ public:
   
   ThreadPool(const size_t, TGS*);
 
-  virtual ~ThreadPool();
+  ~ThreadPool();
 
   template<typename T>
   void enqueue(T&&);
@@ -121,7 +122,7 @@ public:
 
   void schedule();
 
-  ~TGS() { /*std::cout << "TGS destructor\n"; */ }
+  ~TGS();
 
 private:
   size_t _V;
@@ -134,7 +135,11 @@ private:
  
   std::map<size_t, size_t> _worker_assignment;
   
+  std::vector<std::chrono::high_resolution_clock::time_point> _timestamp;
+
   ThreadPool _tpool; 
+
+  void _dump_timestamp() const;
 };
 
 
@@ -147,7 +152,8 @@ inline TGS::TGS(const size_t num_threads) : _tpool(num_threads, this) {
 
   _graph.resize(_V);
   _tasks.resize(_V);
-  
+  _timestamp.resize(2 * _V);
+   
   // parse the meta data of every task
   for (size_t i = 0; i < _V; ++i) {
     size_t id, m, n;
@@ -180,6 +186,23 @@ inline TGS::TGS(const size_t num_threads) : _tpool(num_threads, this) {
 }
 
 
+inline TGS::~TGS() {
+  std::cout << "TGS destructor\n";
+  for (auto& w : _tpool._workers) {
+    w.join();
+  }
+
+  double elapsed = 0;
+  for (int i = 1; i < _timestamp.size(); ++i) {
+    elapsed += std::chrono::duration_cast<std::chrono::microseconds>(
+      _timestamp[i]-_timestamp[i-1]).count();
+  }
+ 
+  std::cout << "Elasped time : " << elapsed << " us\n";
+}
+
+
+
 inline void TGS::schedule() {
 
   std::vector<Task*> source;
@@ -207,10 +230,10 @@ inline void TGS::dump(std::ostream& os) const {
 
 // destructor
 inline ThreadPool::~ThreadPool() {
-  for (auto& w : _workers) {
-    w.join();
-  }
-  //std::cout << "ThreadPool destructor\n";
+  //for (auto& w : _workers) {
+  //  w.join();
+  //}
+  std::cout << "ThreadPool destructor\n";
 }
 
 
@@ -278,14 +301,16 @@ inline ThreadPool::ThreadPool(const size_t num_threads, TGS* t) :
           _queues[_num_threads].pop_front();  
         }
       }
-     
+    
+       _tgs->_timestamp[idx++] = std::chrono::high_resolution_clock::now(); 
 
       // master begins to call RL for an action regarding the task
       auto policy = _rl.policy_read(task, _tgs);
       
-      printf("Master decides to run task %zu with the policy : worker %ld, accelerator %d\n", 
-              task->ID, policy.first, policy.second);
+      //printf("Master decides to run task %zu with the policy : worker %ld, accelerator %d\n", 
+      //        task->ID, policy.first, policy.second);
       
+      _tgs->_timestamp[idx++] = std::chrono::high_resolution_clock::now(); 
       
       task->worker_id = policy.first; 
       
